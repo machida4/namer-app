@@ -1,5 +1,6 @@
 import 'package:english_words/english_words.dart';
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
 
 void main() {
@@ -52,7 +53,7 @@ class _MyHomePageState extends State<MyHomePage> {
     Widget page;
     switch (selectedIndex) {
       case 0:
-        page = HomePageBody(appState: appState);
+        page = BarcodeScannerWidget();
         break;
       case 1:
         page = PlaceholderWidget(pageName: 'Books Page');
@@ -122,6 +123,47 @@ class HomePageBottomBar extends StatelessWidget {
         NavigationDestination(
             icon: Icon(Icons.my_library_books), label: 'books'),
       ],
+    );
+  }
+}
+
+class BarcodeScannerWidget extends StatefulWidget {
+  const BarcodeScannerWidget({super.key});
+
+  @override
+  State<BarcodeScannerWidget> createState() => _BarcodeScannerWidgetState();
+}
+
+class _BarcodeScannerWidgetState extends State<BarcodeScannerWidget> {
+  List<Barcode> barcodes = [];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Barcode Scanner'),
+      ),
+      body: Center(
+        child: Column(
+          children: [
+            SizedBox(
+              width: 300,
+              height: 300,
+              child: MobileScanner(
+                onDetect: (capture) {
+                  final List<Barcode> barcodes = capture.barcodes;
+                  setState(() {
+                    this.barcodes = barcodes;
+                  });
+                },
+              ),
+            ),
+            if (barcodes.isNotEmpty)
+              Text(barcodes.first.rawValue ?? '',
+                  style: Theme.of(context).textTheme.headlineLarge),
+          ],
+        ),
+      ),
     );
   }
 }
