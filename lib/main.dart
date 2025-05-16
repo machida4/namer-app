@@ -1,7 +1,8 @@
-import 'package:english_words/english_words.dart';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:provider/provider.dart';
 
 void main() {
   runApp(MyApp());
@@ -12,28 +13,14 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (context) => MyAppState(),
-      child: MaterialApp(
-        title: 'Namer App',
-        theme: ThemeData(
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepOrange),
-        ),
-        home: MyHomePage(),
+    return MaterialApp(
+      title: 'Barcode Scanner',
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepOrange),
       ),
+      home: MyHomePage(),
     );
-  }
-}
-
-class MyAppState extends ChangeNotifier {
-  var count = 0;
-  var current = WordPair.random();
-
-  void getNext() {
-    count++;
-    current = WordPair.random();
-    notifyListeners();
   }
 }
 
@@ -49,11 +36,10 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    var appState = context.watch<MyAppState>();
     Widget page;
     switch (selectedIndex) {
       case 0:
-        page = BarcodeScannerWidget();
+        page = BarcodeScannerScreen();
         break;
       case 1:
         page = PlaceholderWidget(pageName: 'Books Page');
@@ -71,35 +57,6 @@ class _MyHomePageState extends State<MyHomePage> {
               selectedIndex = index;
             });
           }),
-    );
-  }
-}
-
-class HomePageBody extends StatelessWidget {
-  const HomePageBody({
-    super.key,
-    required this.appState,
-  });
-
-  final MyAppState appState;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text('A random AWESOME idea:'),
-          Text(appState.current.asLowerCase),
-          Text(appState.count.toString()),
-          ElevatedButton(
-            onPressed: () {
-              appState.getNext();
-            },
-            child: Text('Next'),
-          )
-        ],
-      ),
     );
   }
 }
@@ -127,21 +84,37 @@ class HomePageBottomBar extends StatelessWidget {
   }
 }
 
-class BarcodeScannerWidget extends StatefulWidget {
-  const BarcodeScannerWidget({super.key});
+class BarcodeScannerScreen extends StatefulWidget {
+  const BarcodeScannerScreen({super.key});
 
   @override
-  State<BarcodeScannerWidget> createState() => _BarcodeScannerWidgetState();
+  State<BarcodeScannerScreen> createState() => _BarcodeScannerScreenState();
 }
 
-class _BarcodeScannerWidgetState extends State<BarcodeScannerWidget> {
-  List<Barcode> barcodes = [];
+class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
+  final Map<String, String?> _scannedBooks = {};
+  final Set<String> _processingBarcodes = {};
+
+  Future<Book> _fetchBook({required String barcode}) async {
+    final url = 'https://www.googleapis.com/books/v1/volumes?q=isbn:$barcode';
+    final uri = Uri.parse(url);
+    final response = await http.get(uri);
+
+    if (response.statusCode == 200) {
+      final json = jsonDecode(response.body);
+      return Book.fromJson(json);
+    } else {
+      print('API Error: ${response.statusCode}, Body: ${response.body}');
+      throw Exception(
+          'Failed to load book data. Status code: ${response.statusCode}');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Barcode Scanner'),
+        title: const Text('Barcode Scanner'),
       ),
       body: Center(
         child: Column(
@@ -150,17 +123,49 @@ class _BarcodeScannerWidgetState extends State<BarcodeScannerWidget> {
               width: 300,
               height: 300,
               child: MobileScanner(
-                onDetect: (capture) {
-                  final List<Barcode> barcodes = capture.barcodes;
-                  setState(() {
-                    this.barcodes = barcodes;
-                  });
+                onDetect: (capture) async {
+                  final List<Barcode> detectedBarcodes = capture.barcodes;
+                  for (final barcode in detectedBarcodes) {
+                    final barcodeString = barcode.rawValue;
+                    if (barcodeString != null &&
+                        !_scannedBooks.containsKey(barcodeString) &&
+                        !_processingBarcodes.contains(barcodeString)) {
+                      setState(() {
+                        _processingBarcodes.add(barcodeString);
+                        _scannedBooks[barcodeString] =
+                            '$barcodeString (検索中...)';
+                      });
+
+                      try {
+                        final book = await _fetchBook(barcode: barcodeString);
+                        setState(() {
+                          _scannedBooks[barcodeString] = book.title;
+                          _processingBarcodes.remove(barcodeString);
+                        });
+                      } catch (e) {
+                        print('書籍情報の取得に失敗: $e');
+                        setState(() {
+                          _scannedBooks[barcodeString] = '取得失敗';
+                          _processingBarcodes.remove(barcodeString);
+                        });
+                      }
+                    }
+                  }
                 },
               ),
             ),
-            if (barcodes.isNotEmpty)
-              Text(barcodes.first.rawValue ?? '',
-                  style: Theme.of(context).textTheme.headlineLarge),
+            Expanded(
+              child: ListView(
+                children: _scannedBooks.entries.map((entry) {
+                  final barcodeValue = entry.key;
+                  final bookTitle = entry.value;
+                  return ListTile(
+                    title: Text(bookTitle ?? 'タイトル不明'),
+                    subtitle: Text('ISBN: $barcodeValue'),
+                  );
+                }).toList(),
+              ),
+            ),
           ],
         ),
       ),
@@ -176,5 +181,27 @@ class PlaceholderWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Center(child: Text(pageName));
+  }
+}
+
+class Book {
+  final String title;
+
+  const Book({required this.title});
+
+  factory Book.fromJson(Map<String, dynamic> json) {
+    final items = json['items'] as List<dynamic>?;
+
+    if (items != null && items.isNotEmpty) {
+      final bookInfo = items.first as Map<String, dynamic>?;
+      if (bookInfo != null) {
+        final volumeInfo = bookInfo['volumeInfo'] as Map<String, dynamic>?;
+        if (volumeInfo != null) {
+          final title = volumeInfo['title'] as String? ?? 'タイトルなし';
+          return Book(title: title);
+        }
+      }
+    }
+    return Book(title: 'タイトルなし');
   }
 }
